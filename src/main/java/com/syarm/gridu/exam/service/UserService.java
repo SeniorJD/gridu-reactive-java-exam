@@ -1,64 +1,44 @@
 package com.syarm.gridu.exam.service;
 
-import com.syarm.gridu.exam.exceptions.UserNotFoundException;
-import com.syarm.gridu.exam.model.Order;
-import com.syarm.gridu.exam.model.User;
-import com.syarm.gridu.exam.model.dto.UserOrder;
-import com.syarm.gridu.exam.repository.OrderUserMappingRepository;
+import com.syarm.gridu.exam.model.dto.UserInfoDTO;
 import com.syarm.gridu.exam.repository.UserRepository;
+import com.syarm.gridu.exam.service.web.OrderWebClientService;
+import com.syarm.gridu.exam.service.web.ProductWebClientService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 @Service
 @RequiredArgsConstructor
 public class UserService {
     private final UserRepository userRepository;
-    private final OrderUserMappingRepository orderUserMappingRepository;
-    private final OrderService orderService;
-    private final ProductService productService;
+    private final OrderWebClientService orderService;
+    private final ProductWebClientService productService;
 
-    public Flux<UserOrder> getUserById(Long userId) {
-        return findUserById(userId)
-                .flatMapMany(user ->
-                    orderUserMappingRepository.getOrdersByUserIdFlux(userId)
-                        .flatMap(orderService::findOrderByIdMono)
-                        .map(order -> convert(user, order))
-                        .log()
-                )
-                .filter(userOrder -> userOrder.getOrderItems().size() > 0)
-                .doOnNext(this::fillProductInfo)
-                .log()
-                .onErrorResume(e -> Flux.empty());
-    }
+    public Flux<UserInfoDTO> getUserInfoById(String userId, String requestId) {
+        return userRepository.findById(userId)
+                .flatMapMany(user -> orderService.findOrdersByPhoneNumberFlux(user.getPhone(), requestId)
+                        .map(orderDto -> {
+                            var userInfoDto = new UserInfoDTO();
+                            userInfoDto.setUserName(user.getName());
+                            userInfoDto.setPhoneNumber(user.getPhone());
+                            userInfoDto.setOrderNumber(orderDto.getOrderNumber());
+                            userInfoDto.setProductCode(orderDto.getProductCode());
 
-    private UserOrder convert(User user, Order order) {
-        var userOrder = new UserOrder();
-        userOrder.setUserId(user.getId());
-        userOrder.setUserName(user.getName());
-        userOrder.setOrderId(order.getId());
-        userOrder.setOrderDate(order.getDate());
-        userOrder.setOrderItems(order.getItems());
-        return userOrder;
-    }
+                            return userInfoDto;
+                        }))
+                .flatMap(userInfoDto ->
+                    productService.findProductsByCodeFlux(userInfoDto.getProductCode(), requestId)
+                            .onErrorResume(e -> Flux.empty())
+                            .reduce((p1, p2) -> p1.getScore() > p2.getScore() ? p1 : p2)
+                            .map(productDto -> {
+                                userInfoDto.setProductId(productDto.getProductId());
+                                userInfoDto.setProductName(productDto.getProductName());
 
-    private void fillProductInfo(UserOrder order) {
-        Flux.fromIterable(order.getOrderItems())
-                .publishOn(Schedulers.boundedElastic())
-                .doOnNext(orderItem ->
-                    productService.findProductByIdMono(orderItem.getProductId())
-                        .onErrorComplete()
-                        .subscribe(product -> orderItem.setProductName(product.getProductName())))
-                .log()
-                .subscribe();
-    }
-
-    private Mono<User> findUserById(Long userId) {
-        return Mono.justOrEmpty(userId)
-                .switchIfEmpty(Mono.error(new UserNotFoundException(userId)))
-                .flatMap(userRepository::getUserByIdMono)
-                .switchIfEmpty(Mono.error(new UserNotFoundException(userId)));
+                                return userInfoDto;
+                            })
+                            .switchIfEmpty(Mono.just(userInfoDto))
+                );
     }
 }

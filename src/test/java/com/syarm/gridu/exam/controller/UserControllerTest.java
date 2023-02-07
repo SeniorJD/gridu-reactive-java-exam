@@ -8,6 +8,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.UUID;
+
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -22,11 +24,13 @@ public class UserControllerTest {
     private UserService userService;
 
     @Test
-    void getOrderInfoTest() throws Exception {
-        var id = 1L;
-        mvc.perform(get("/v1/user/" + id))
+    void getUserInfoByIdTest() throws Exception {
+        var userId = "123";
+        var requestId = UUID.randomUUID().toString();
+        mvc.perform(get("/v1/user/" + userId)
+                        .header("REQUEST_ID", requestId))
                 .andExpect(status().isOk());
 
-        verify(userService).getUserById(id);
+        verify(userService).getUserInfoById(userId, requestId);
     }
 }

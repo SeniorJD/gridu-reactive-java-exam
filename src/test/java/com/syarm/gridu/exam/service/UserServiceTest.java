@@ -1,205 +1,210 @@
 package com.syarm.gridu.exam.service;
 
-import com.syarm.gridu.exam.exceptions.OrderNotFoundException;
-import com.syarm.gridu.exam.exceptions.ProductNotFoundException;
-import com.syarm.gridu.exam.model.Order;
-import com.syarm.gridu.exam.model.OrderItem;
-import com.syarm.gridu.exam.model.Product;
 import com.syarm.gridu.exam.model.User;
-import com.syarm.gridu.exam.model.dto.UserOrder;
-import com.syarm.gridu.exam.repository.OrderUserMappingRepository;
+import com.syarm.gridu.exam.model.dto.OrderDTO;
+import com.syarm.gridu.exam.model.dto.ProductDTO;
+import com.syarm.gridu.exam.model.dto.UserInfoDTO;
 import com.syarm.gridu.exam.repository.UserRepository;
+import com.syarm.gridu.exam.service.web.OrderWebClientService;
+import com.syarm.gridu.exam.service.web.ProductWebClientService;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.util.List;
-
 import static org.mockito.Mockito.*;
 
-@SpringBootTest
+@ExtendWith(MockitoExtension.class)
 public class UserServiceTest {
+    private static final String REQUEST_ID = "REQUEST_ID";
+    private static final String USER_ID = "USER_ID";
+    private static final String USER_NAME = "USER_NAME";
+    private static final String PHONE_NUMBER = "PHONE_NUMBER";
+    private static final String PRODUCT_CODE = "PRODUCT_CODE";
+    private static final String PRODUCT_NAME = "PRODUCT_NAME";
+    private static final String ORDER_NUMBER = "ORDER_NUMBER";
 
-    @MockBean
-    private UserRepository userRepository;
-    @MockBean
-    private OrderUserMappingRepository orderUserMappingRepository;
-    @MockBean
-    private OrderService orderService;
-    @MockBean
-    private ProductService productService;
-
-    @Autowired
     private UserService underTest;
 
-    @Test
-    public void getUserById_userNotFound() {
-        StepVerifier.create(underTest.getUserById(null))
-                .expectNextCount(0)
-                .verifyComplete();
+    @Mock
+    private UserRepository userRepository;
+    @Mock
+    private OrderWebClientService orderWebClientService;
+    @Mock
+    private ProductWebClientService productWebClientService;
 
-        verify(orderUserMappingRepository, never()).getOrdersByUserIdFlux(any(Long.class));
+    @BeforeEach
+    void setUp() {
+        underTest = new UserService(
+                userRepository,
+                orderWebClientService,
+                productWebClientService
+        );
     }
 
     @Test
-    public void getUserById_userNotFound2() {
-        StepVerifier.create(underTest.getUserById(10L))
-                .expectNextCount(0)
-                .verifyComplete();
+    void getUserInfoByIdTest() {
+        var user = generateUser();
+        var orderDto = generateOrder();
+        var productDto = generateProduct("productId", 123.45);
 
-        verify(orderUserMappingRepository, never()).getOrdersByUserIdFlux(any(Long.class));
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Mono.just(user));
+        when(orderWebClientService.findOrdersByPhoneNumberFlux(PHONE_NUMBER, REQUEST_ID))
+                .thenReturn(Flux.just(orderDto));
+        when(productWebClientService.findProductsByCodeFlux(PRODUCT_CODE, REQUEST_ID))
+                .thenReturn(Flux.just(productDto));
+
+        Flux<UserInfoDTO> flux = underTest.getUserInfoById(USER_ID, REQUEST_ID);
+
+        StepVerifier.create(flux)
+                .assertNext(actual -> {
+                    Assertions.assertEquals(user.getName(), actual.getUserName());
+                    Assertions.assertEquals(user.getPhone(), actual.getPhoneNumber());
+                    Assertions.assertEquals(orderDto.getOrderNumber(), actual.getOrderNumber());
+                    Assertions.assertEquals(productDto.getProductCode(), actual.getProductCode());
+                    Assertions.assertEquals(productDto.getProductName(), actual.getProductName());
+                    Assertions.assertEquals(productDto.getProductId(), actual.getProductId());
+                })
+                .verifyComplete();
     }
 
     @Test
-    public void getUserById_noOrders() {
-        long userId = 0L;
-        User user = mock(User.class);
-        when(userRepository.getUserByIdMono(userId)).thenReturn(Mono.just(user));
+    void getUserInfoById_relevant() {
+        var user = generateUser();
+        var orderDto = generateOrder();
+        var productDto = generateProduct("productId", 123.45);
+        var productDto2 = generateProduct("productId2", 234.56);
+        var productDto3 = generateProduct("productId3", 0);
 
-        when(orderUserMappingRepository.getOrdersByUserIdFlux(userId))
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Mono.just(user));
+        when(orderWebClientService.findOrdersByPhoneNumberFlux(PHONE_NUMBER, REQUEST_ID))
+                .thenReturn(Flux.just(orderDto));
+        when(productWebClientService.findProductsByCodeFlux(PRODUCT_CODE, REQUEST_ID))
+                .thenReturn(Flux.just(productDto, productDto2, productDto3));
+
+        var flux = underTest.getUserInfoById(USER_ID, REQUEST_ID);
+
+        StepVerifier.create(flux)
+                .assertNext(actual -> Assertions.assertEquals(productDto2.getProductId(), actual.getProductId()))
+                .verifyComplete();
+    }
+
+    @Test
+    void getUserInfoByIdTest_onProductsException() {
+        var user = generateUser();
+        var orderDto = generateOrder();
+
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Mono.just(user));
+        when(orderWebClientService.findOrdersByPhoneNumberFlux(PHONE_NUMBER, REQUEST_ID))
+                .thenReturn(Flux.just(orderDto));
+        when(productWebClientService.findProductsByCodeFlux(PRODUCT_CODE, REQUEST_ID))
+                .thenReturn(Flux.error(new Exception()));
+
+        var flux = underTest.getUserInfoById(USER_ID, REQUEST_ID);
+
+        StepVerifier.create(flux)
+                .assertNext(actual -> {
+                    Assertions.assertEquals(user.getName(), actual.getUserName());
+                    Assertions.assertEquals(user.getPhone(), actual.getPhoneNumber());
+                    Assertions.assertEquals(orderDto.getOrderNumber(), actual.getOrderNumber());
+                    Assertions.assertEquals(orderDto.getProductCode(), actual.getProductCode());
+                    Assertions.assertNull(actual.getProductId());
+                    Assertions.assertNull(actual.getProductName());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void getUserInfoByIdTest_noProduct() {
+        var user = generateUser();
+        var orderDto = generateOrder();
+
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Mono.just(user));
+        when(orderWebClientService.findOrdersByPhoneNumberFlux(PHONE_NUMBER, REQUEST_ID))
+                .thenReturn(Flux.just(orderDto));
+        when(productWebClientService.findProductsByCodeFlux(PRODUCT_CODE, REQUEST_ID))
                 .thenReturn(Flux.empty());
 
-        StepVerifier.create(underTest.getUserById(userId))
+        var flux = underTest.getUserInfoById(USER_ID, REQUEST_ID);
+
+        StepVerifier.create(flux)
+                .assertNext(actual -> {
+                    Assertions.assertEquals(user.getName(), actual.getUserName());
+                    Assertions.assertEquals(user.getPhone(), actual.getPhoneNumber());
+                    Assertions.assertEquals(orderDto.getOrderNumber(), actual.getOrderNumber());
+                    Assertions.assertEquals(orderDto.getProductCode(), actual.getProductCode());
+                    Assertions.assertNull(actual.getProductId());
+                    Assertions.assertNull(actual.getProductName());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void getUserInfoByIdTest_noOrder() {
+        var user = generateUser();
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Mono.just(user));
+        when(this.orderWebClientService.findOrdersByPhoneNumberFlux(PHONE_NUMBER, REQUEST_ID))
+                .thenReturn(Flux.empty());
+
+        var flux = underTest.getUserInfoById(USER_ID, REQUEST_ID);
+
+        StepVerifier.create(flux)
                 .expectNextCount(0)
                 .verifyComplete();
 
-        verify(orderService, never()).findOrderByIdMono(userId);
-        verify(productService, never()).findProductByIdMono(userId);
+        verify(productWebClientService, never()).findProductsByCodeFlux(PRODUCT_CODE, REQUEST_ID);
     }
 
     @Test
-    public void getUserById_orderNotFound() {
-        long userId = 0L;
-        User user = mock(User.class);
-        when(userRepository.getUserByIdMono(userId)).thenReturn(Mono.just(user));
+    void getUserInfoByIdTest_noUser() {
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Mono.empty());
 
-        long orderId = 1L;
+        var flux = underTest.getUserInfoById(USER_ID, REQUEST_ID);
 
-        when(orderUserMappingRepository.getOrdersByUserIdFlux(userId))
-                .thenReturn(Flux.fromIterable(List.of(orderId)));
-
-        when(orderService.findOrderByIdMono(orderId)).thenReturn(Mono.error(new OrderNotFoundException(orderId)));
-
-        StepVerifier.create(underTest.getUserById(userId))
-                .expectNextCount(0)
-                .verifyComplete();
-    }
-
-    @Test
-    public void getUserById_orderEmpty() {
-        long userId = 0L;
-        User user = new User(userId, "User #" + userId);
-        when(userRepository.getUserByIdMono(userId)).thenReturn(Mono.just(user));
-
-        long orderId = 1L;
-
-        when(orderUserMappingRepository.getOrdersByUserIdFlux(userId))
-                .thenReturn(Flux.fromIterable(List.of(orderId)));
-
-        Order order = new Order(
-                orderId,
-                System.currentTimeMillis(),
-                List.of()
-        );
-        when(orderService.findOrderByIdMono(orderId)).thenReturn(Mono.just(order));
-
-        StepVerifier.create(underTest.getUserById(userId))
+        StepVerifier.create(flux)
                 .expectNextCount(0)
                 .verifyComplete();
 
-        verify(productService, never()).findProductByIdMono(anyLong());
+        verify(orderWebClientService, never()).findOrdersByPhoneNumberFlux(PHONE_NUMBER, REQUEST_ID);
+        verify(productWebClientService, never()).findProductsByCodeFlux(PRODUCT_CODE, REQUEST_ID);
     }
 
-    @Test
-    public void getUserById_productNotFound() {
-        long userId = 0L;
-        User user = new User(userId, "User #" + userId);
-        when(userRepository.getUserByIdMono(userId)).thenReturn(Mono.just(user));
+    private static User generateUser() {
+        User user = new User();
+        user.setId(USER_ID);
+        user.setName(USER_NAME);
+        user.setPhone(PHONE_NUMBER);
 
-        long orderId = 1L;
-
-        when(orderUserMappingRepository.getOrdersByUserIdFlux(userId))
-                .thenReturn(Flux.fromIterable(List.of(orderId)));
-
-        long productId = 3L;
-        when(productService.findProductByIdMono(productId))
-                .thenReturn(Mono.error(new ProductNotFoundException(productId)));
-
-        long orderItemId = 2L;
-        OrderItem item = new OrderItem(
-                orderItemId,
-                productId,
-                null,
-                100,
-                123.4
-        );
-
-        Order order = new Order(
-                orderId,
-                System.currentTimeMillis(),
-                List.of(item)
-        );
-        when(orderService.findOrderByIdMono(orderId)).thenReturn(Mono.just(order));
-
-        UserOrder expected = new UserOrder(
-                user.getId(),
-                user.getName(),
-                order.getId(),
-                order.getDate(),
-                List.of(item)
-        );
-
-        StepVerifier.create(underTest.getUserById(userId))
-                .expectNextMatches((expected::equals))
-                .verifyComplete();
+        return user;
     }
 
-    @Test
-    public void getUserById_success() {
-        long userId = 0L;
-        User user = new User(userId, "User #" + userId);
-        when(userRepository.getUserByIdMono(userId)).thenReturn(Mono.just(user));
+    private static OrderDTO generateOrder() {
+        OrderDTO orderDto = new OrderDTO();
+        orderDto.setPhoneNumber(PHONE_NUMBER);
+        orderDto.setOrderNumber(ORDER_NUMBER);
+        orderDto.setProductCode(PRODUCT_CODE);
 
-        long orderId = 1L;
+        return orderDto;
+    }
 
-        when(orderUserMappingRepository.getOrdersByUserIdFlux(userId))
-                .thenReturn(Flux.fromIterable(List.of(orderId)));
+    private static ProductDTO generateProduct(String productId, double score) {
+        ProductDTO productDto = new ProductDTO();
+        productDto.setProductId(productId);
+        productDto.setProductCode(PRODUCT_CODE);
+        productDto.setProductName(PRODUCT_NAME);
+        productDto.setScore(score);
 
-        long productId = 3L;
-        Product product = new Product(productId, "Product #" + productId);
-        when(productService.findProductByIdMono(productId))
-                .thenReturn(Mono.just(product));
-
-        long orderItemId = 2L;
-        OrderItem item = new OrderItem(
-                orderItemId,
-                productId,
-                null,
-                100,
-                123.4
-        );
-
-        Order order = new Order(
-                orderId,
-                System.currentTimeMillis(),
-                List.of(item)
-        );
-        when(orderService.findOrderByIdMono(orderId)).thenReturn(Mono.just(order));
-
-        UserOrder expected = new UserOrder(
-                user.getId(),
-                user.getName(),
-                order.getId(),
-                order.getDate(),
-                List.of(item)
-        );
-
-        StepVerifier.create(underTest.getUserById(userId))
-                .expectNextMatches((expected::equals))
-                .verifyComplete();
+        return productDto;
     }
 }

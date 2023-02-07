@@ -1,13 +1,14 @@
 package com.syarm.gridu.exam.model;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 
-@AllArgsConstructor
-@Setter
-@Getter
+@Document(collection = "users")
+@Data
 public class User {
-    private long id;
+    @Id
+    private String id;
     private String name;
+    private String phone;
 }
